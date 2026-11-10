@@ -13,6 +13,31 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     const errors = [];
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(process.argv[2] || 'http://127.0.0.1:8765/');
+    const fs = require('node:fs'), zlib = require('node:zlib');
+    const manifest = JSON.parse(fs.readFileSync('gd_assets.json'));
+    const loader = zlib.gunzipSync(fs.readFileSync(manifest.loader.url)).toString();
+    const uploadFunctions = ['_glBufferData', '_glBufferSubData'].map(name =>
+      loader.match(new RegExp('function ' + name + '\\([^]*?\\n}'))[0]).join('\n');
+    const uploadCheck = await page.evaluate(source => {
+      const gl = document.createElement('canvas').getContext('webgl2');
+      const heap = new Uint8Array([9, 8, 7, 6, 5, 4]);
+      const uploads = new Function('GLctx', 'HEAPU8', source +
+        '; return {data:_glBufferData, sub:_glBufferSubData};')(gl, heap);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      uploads.data(gl.ARRAY_BUFFER, 4, 1, gl.DYNAMIC_DRAW);
+      uploads.sub(gl.ARRAY_BUFFER, 1, 2, 3);
+      uploads.sub(gl.ARRAY_BUFFER, 0, 0, 1);
+      const bytes = new Uint8Array(4);
+      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, bytes);
+      uploads.data(gl.ARRAY_BUFFER, 0, 1, gl.DYNAMIC_DRAW);
+      const emptySize = gl.getBufferParameter(gl.ARRAY_BUFFER, gl.BUFFER_SIZE);
+      const error = gl.getError();
+      gl.deleteBuffer(buffer);
+      gl.getExtension('WEBGL_lose_context').loseContext();
+      return {bytes: Array.from(bytes), emptySize, error};
+    }, uploadFunctions);
+    assert.deepEqual(uploadCheck, {bytes: [8, 6, 5, 5], emptySize: 0, error: 0});
     await page.locator('#loadFly').click();
     await page.waitForFunction(() => window.__gdInputReady === true, null, {timeout: 240000});
     const result = await page.evaluate(async () => {

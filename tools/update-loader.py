@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+from webgl_uploads import patch_uploads
 
 ROOT = Path(__file__).resolve().parents[1]
 manifest_path = ROOT / 'gd_assets.json'
@@ -26,6 +27,7 @@ needle = 'var ctx = canvas.getContext("webgl2", webGLContextAttributes);'
 if 'webGLContextAttributes.powerPreference = "high-performance";' not in loader:
     assert loader.count(needle) == 1
     loader = loader.replace(needle, 'webGLContextAttributes.powerPreference = "high-performance";\n    ' + needle)
+loader = patch_uploads(loader)
 raw = loader.encode()
 digest = hashlib.sha256(raw).hexdigest()
 url = 'payload/loader-' + digest[:24] + '.gz'

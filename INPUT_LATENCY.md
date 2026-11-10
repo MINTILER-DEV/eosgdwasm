@@ -41,3 +41,27 @@ Queue measurements exclude hardware/OS delivery, game simulation, GPU work,
 compositing, and display scanout. They are not click-to-photon measurements.
 A busy main thread must still finish its current WASM task before a browser
 input handler can run.
+
+Rendering allocation reduction:
+
+The WebGL2 glue now passes the current WASM heap with explicit byte offsets
+and lengths to buffer uploads, including emulated client-side vertex/index
+arrays. It avoids creating a typed-array subview for every upload. Empty
+updates remain no-ops, empty allocations stay empty, and replacement heaps
+following WASM memory growth are read at each call. Run
+`node --test tests/*.test.cjs` for range and input regression tests. The browser
+test also reads uploaded bytes back from a real WebGL2 buffer.
+
+This reduces JavaScript allocation pressure that can contribute to frame
+stalls. It does not prove that garbage collection causes a particular user's
+intermittent delay. Frame stalls can also postpone browser event delivery;
+immediate queue wakeups cannot interrupt an already running WASM/render task.
+
+In two similar 17-second headless Chromium menu profiles, heap subview calls
+fell from 29,184 across 321 game-loop iterations to 248 across 325 iterations.
+This is an allocation-count comparison, not proof of eliminated frame hitches
+or a controlled FPS benchmark. Headless software rendering differs from a
+player's hardware/browser setup.
+
+The upload range API is documented in the
+[WebGL2 bufferSubData reference](https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/bufferSubData).
