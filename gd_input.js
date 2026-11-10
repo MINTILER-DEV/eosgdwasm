@@ -7,6 +7,7 @@
   var queueSamples = [], frameSamples = [], lastFrame = 0, frameN = 0, focusAcked = false;
   var mouseButtons = 0;
   var benchmark = null;
+  var measureStats = /[?&]perf(=|&|$)/.test(location.search);
   Module.gdBeginBenchmark = function (durationMs) {
     benchmark = {duration: Math.max(1000, Math.min(60000, durationMs || 20000)),
       start: null, previous: 0, frames: [], input: [], heap: 0};
@@ -20,7 +21,9 @@
     return stamp > 0 && stamp <= now && now - stamp < 60000 ? stamp : now;
   }
   function push(msg, wp, lp, time) {
-    Module.gdInputQueue.push([msg | 0, wp | 0, lp | 0, time || performance.now()]);
+    Module.gdInputQueue.push([msg | 0, wp | 0, lp | 0, time === undefined ? performance.now() : time]);
+    // Movement stays coalesced; every press AND release can interrupt a frame wait.
+    if (msg !== 0x200 && Module.gdWakeInput) Module.gdWakeInput();
   }
   function position(e) {
     var r = el.getBoundingClientRect();
@@ -41,17 +44,19 @@
   Module.gdPollInput = function () {
     if (head >= Module.gdInputQueue.length) return null;
     var entry = Module.gdInputQueue[head++];
-    if (entry[0] === 0x100 || entry[0] === 0x201 || entry[0] === 0x204) {
+    if ((measureStats || benchmark) &&
+        (entry[0] === 0x100 || entry[0] === 0x201 || entry[0] === 0x204)) {
       var delay = Math.max(0, performance.now() - entry[3]);
       queueSamples.push(delay); if (queueSamples.length > 120) queueSamples.shift();
       Module.gdInputStats.queueMs = delay; Module.gdInputStats.samples++;
-      Module.gdInputStats.queueP95Ms = percentile(queueSamples);
+      // Percentiles are computed once per stats interval, outside input polling.
       if (benchmark) benchmark.input.push(delay);
     }
     if (head >= Module.gdInputQueue.length) { Module.gdInputQueue.length = 0; head = 0; }
     return entry;
   };
   Module.gdMeasureFrame = function () {
+    if (!measureStats && !benchmark) return;
     var now = performance.now();
     if (benchmark && !document.hidden) {
       var b = benchmark;
@@ -72,7 +77,10 @@
     if (lastFrame && !document.hidden) {
       frameSamples.push(now - lastFrame);
       if (frameSamples.length > 120) frameSamples.shift();
-      if (++frameN % 30 === 0) Module.gdInputStats.frameP95Ms = percentile(frameSamples);
+      if (++frameN % 30 === 0) {
+        Module.gdInputStats.frameP95Ms = percentile(frameSamples);
+        Module.gdInputStats.queueP95Ms = percentile(queueSamples);
+      }
     }
     lastFrame = now;
   };
@@ -105,7 +113,7 @@
   el.addEventListener('pointerdown', function (e) {
     if (!ready() || e.button > 2) return;
     acknowledgeFocus();
-    el.focus({preventScroll: true});
+    if (document.activeElement !== el) el.focus({preventScroll: true});
     var lp = position(e), b = e.pointerType === 'mouse' ? e.button : 0;
     if (e.pointerType === 'mouse') {
       syncMouse(e.buttons === undefined ? (mouseButtons | [1, 4, 2][b]) : e.buttons, lp, timestamp(e));
